@@ -503,6 +503,7 @@ func (s *Server) seedOrchestrationTools() {
 	s.seedWorkerReadToolsUnbind() // list_facts/list_companies/list_worker_traces 从 worker 默认解绑(一次性)
 	s.seedWorkerReadbackRebind()  // 修复旧迁移误删：把 search_all_worker_traces/get_worker_trace/node_detail 补绑回 worker(一次性)
 	s.seedAutoReportFindingBinding()
+	s.seedMainAgentLabStatusBinding() // 主 Agent 补绑 lab_status：审计任务先探测 Docker/WSL2，再下发验证意图(一次性)
 	s.unbindGoalMetDefault()
 	s.reseedGoalsPrompt()             // goals 提示词加入「抽操作约束」步 → 旧库追加一版新默认(一次性)
 	s.reseedMainAgentPrompt()         // mainagent 提示词加入「目标达成后 add_intent 反问是否建目标」(一次性)
@@ -800,6 +801,23 @@ func (s *Server) seedAutoReportFindingBinding() {
 	}
 	if err := s.m.pg.AddAgentToToolBinding("auto", []string{"report_finding"}); err != nil {
 		log.Printf("[auto] report_finding 默认绑定失败: %v", err)
+		return
+	}
+	_ = s.m.pg.SetSetting(flag, "true")
+}
+
+// seedMainAgentLabStatusBinding adds "mainagent" to lab_status's binding ONCE
+// (guarded by a settings flag), so existing DBs — whose lab_status row was seeded
+// as worker-only — also let the human-interface agent probe Docker/WSL2 before
+// dispatching a verification intent. Fresh DBs already get it via
+// MainAgentTools(); this only backfills without overriding a user unbind.
+func (s *Server) seedMainAgentLabStatusBinding() {
+	const flag = "mainagent_lab_status_v1"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	if err := s.m.pg.AddAgentToToolBinding("mainagent", []string{"lab_status"}); err != nil {
+		log.Printf("[mainagent] lab_status 默认绑定失败: %v", err)
 		return
 	}
 	_ = s.m.pg.SetSetting(flag, "true")

@@ -58,6 +58,8 @@ worker 可以在 `127.0.0.1` 上起一个**一次性 Docker 环境**（Windows �
 - **两种模式**：compose（自动注入 `${LAB_BIND}`、`${LAB_PORT_N}`、`${LAB_SOURCE}`）或 image（镜像 + 启动命令 + 端口映射）；
 - **复用与隔离**：同一 `key` + `reuse=true` 复用环境，按 holder 引用计数，最后一个使用方释放才销毁；破坏性验证单独起环境；
 - **默认限额**：内存 2G、2 CPU、1024 pids；任务终态/删除或超过 4 小时由 GC 自动回收。
+- **主 Agent 的职责**：审计任务里主 Agent 会先 `lab_status` 探测（本机 Docker + WSL2），再用 `add_intent`
+  下发「用 `lab_up` 验证 XX」；它不会自己安装 PHP/启动 Docker，`lab_up`/`lab_down` 仍只给 worker。
 
 ### 🪟 Windows：Git Bash + WSL2，不再是二等公民
 

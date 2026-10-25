@@ -20,8 +20,8 @@ var auditModeLabels = map[string]string{
 	db.TaskModeMiniprogramAudit: "小程序代码审计（反编译产物）",
 }
 
-// ModeDirective 渲染任务模式注入 planner/worker 系统提示的指令块。
-// role ∈ {"planner","worker"}；pentest 或空模式返回 ""（零侵入）。
+// ModeDirective 渲染任务模式注入 planner/worker/mainagent 系统提示的指令块。
+// role ∈ {"planner","worker","mainagent"}；pentest 或空模式返回 ""（零侵入）。
 func ModeDirective(mode, role string) string {
 	label, ok := auditModeLabels[mode]
 	if !ok {
@@ -30,14 +30,34 @@ func ModeDirective(mode, role string) string {
 	var b strings.Builder
 	b.WriteString("\n\n【任务模式：" + label + "（本块优先级高于上方的渗透探索启发式）】：")
 	b.WriteString("\n立场：本任务是【静态代码审计】，不是黑盒渗透。")
-	if role == "planner" {
+	switch role {
+	case "planner":
 		b.WriteString(plannerModeBody(mode, label))
-	} else {
+	case "mainagent":
+		// 主 Agent 是人在环路接口：只负责探测运行时 + 下发意图，不亲自搭环境。
+		// 它不需要 worker/planner 的产出规约与资产关联规约，直接返回。
+		b.WriteString(mainAgentModeBody(mode, label))
+		return b.String()
+	default:
 		b.WriteString(workerModeBody(mode, label))
 	}
 	b.WriteString(auditAssetWorkflow)
 	b.WriteString(auditOutputSpec)
 	b.WriteString("\n（审计方法论的完整检查清单见技能 " + skillForMode(mode) + "：开工先调用它，按其流程执行。）")
+	return b.String()
+}
+
+// mainAgentModeBody 面向人在环路的主 Agent：不亲自搭环境，先探测运行时再下发意图。
+// 这段存在的直接原因：主 Agent 默认有 Bash，遇到「本地验证」会自己查 docker/装 PHP；
+// 而它既没有 lab_status，也不知道 WSL2 回退，于是误判「Docker 不可用」并手工搭环境。
+func mainAgentModeBody(mode, label string) string {
+	var b strings.Builder
+	b.WriteString("\n人的接口纪律：")
+	b.WriteString("\n- 你不亲自搭环境、不安装 PHP/MySQL/Docker，也不用 Bash 手工起服务；动态验证是 worker 的职责。")
+	b.WriteString("\n- 人要求「本地验证 / 动态验证 / 复现漏洞」时：先调用 lab_status 探测运行时。它会同时检查本机 Docker 与 WSL2 内的 Docker Engine；不要只看 `docker version` 连不上 Docker Desktop 就判定不可用。")
+	b.WriteString("\n- lab_status 返回 available=true 时，用 add_intent 下发一条「用 lab_up 在本地靶场验证 XX」的高优先级意图（priority 8-10），写清要验证的 finding / 接口 / 预期结果，worker 会执行。")
+	b.WriteString("\n- available=false 时，如实告诉人需要启动 Docker Desktop 或 WSL2 内的 Docker Engine，并转述 lab_status 的 reason；不要自己尝试下载 PHP、装 MySQL 或手工搭环境。")
+	b.WriteString("\n- 所有动态验证只允许访问本任务自建的 127.0.0.1/localhost 靶场，不得访问真实目标。")
 	return b.String()
 }
 

@@ -600,6 +600,10 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	main.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	main.SetWebSearch(s.webSearchFor("mainagent"))
 	main.SetSteerWork(s.engine.SteerWork) // steer_work：人对运行中 work 实时纠偏
+	main.SetTaskMode(t.Mode)              // 任务模式:审计类给主 Agent 注入「先 lab_status 探测、再 add_intent 下发」
+	if db.IsAuditMode(db.NormalizeTaskMode(t.Mode)) {
+		main.SetLab(s.lab) // 主 Agent 的 lab_status 需要看到 Docker/WSL2 的真实可用性
+	}
 	bundle := &taskAgentBundle{
 		runtime: goalRuntime, plannerRuntime: plannerRuntime, workerRuntime: workerRuntime,
 		mainRuntime: mainRuntime, pl: pl, wk: wk, main: main,

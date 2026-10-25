@@ -71,6 +71,47 @@ func TestModeDirectiveAuditModes(t *testing.T) {
 	}
 }
 
+// TestModeDirectiveMainAgent locks the human-interface discipline: the main agent
+// must probe lab_status (which also covers WSL2) and dispatch add_intent, instead
+// of trying to install PHP/Docker itself with Bash.
+func TestModeDirectiveMainAgent(t *testing.T) {
+	for _, mode := range []string{"code_audit", "miniprogram_audit"} {
+		got := ModeDirective(mode, "mainagent")
+		for _, want := range []string{
+			"lab_status", "add_intent", "WSL2", "Docker",
+			"不亲自搭环境", "不要自己尝试下载 PHP", "127.0.0.1",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s/mainagent 缺少 %q", mode, want)
+			}
+		}
+		// 主 Agent 不负责产出规约/资产登记，不应携带 worker/planner 的长尾。
+		if strings.Contains(got, "report_finding") || strings.Contains(got, "insert_assets") {
+			t.Errorf("%s/mainagent 不应携带 worker 的产出/资产规约", mode)
+		}
+	}
+	if got := ModeDirective("pentest", "mainagent"); got != "" {
+		t.Errorf("pentest/mainagent 应为空串, got %q", got)
+	}
+}
+
+// TestMainAgentToolsLabStatus verifies the main agent can only PROBE the lab
+// runtime (lab_status), never start/stop environments itself (lab_up/lab_down
+// stay worker-only).
+func TestMainAgentToolsLabStatus(t *testing.T) {
+	ts := NewToolSet(nil, "human")
+	names := map[string]bool{}
+	for _, tool := range ts.MainAgentTools() {
+		names[tool.Name()] = true
+	}
+	if !names["lab_status"] {
+		t.Fatal("MainAgentTools 缺少 lab_status")
+	}
+	if names["lab_up"] || names["lab_down"] {
+		t.Fatalf("MainAgentTools 不应包含 lab_up/lab_down: %v", names)
+	}
+}
+
 // ---- extract_archive ----
 
 // makeZip 构造一个测试 zip：files 为 name→content。

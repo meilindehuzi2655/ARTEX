@@ -33,6 +33,13 @@ type MainAgent struct {
 	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
 	noaEnabledFn    func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
+	// taskMode 是任务模式(pentest/code_audit/miniprogram_audit)。审计模式经
+	// ModeDirective(mode,"mainagent") 注入「先 lab_status 探测、再 add_intent 下发」
+	// 的接口纪律，避免主 Agent 用 Bash 自己装 PHP/起 Docker。空=pentest。
+	taskMode string
+	// lab 是本地靶场后端（Docker/WSL2）；仅审计任务接线，让 lab_status 能看到
+	// WSL2 回退后的真实可用性。nil = 工具自报不可用。
+	lab LabRunner
 }
 
 // SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
@@ -56,6 +63,13 @@ func (m *MainAgent) maxTokens() int {
 	}
 	return m.maxTokensFn()
 }
+
+// SetTaskMode 设定任务模式（空/未知=pentest 零侵入）。审计模式经 ModeDirective
+// 注入「不亲自搭环境、先 lab_status、再 add_intent」的接口纪律。
+func (m *MainAgent) SetTaskMode(mode string) { m.taskMode = db.NormalizeTaskMode(mode) }
+
+// SetLab 接线本地靶场后端（Docker/WSL2）。nil=lab_status 自报不可用。
+func (m *MainAgent) SetLab(l LabRunner) { m.lab = l }
 
 func NewMainAgent(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int) *MainAgent {
 	return &MainAgent{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns}
@@ -117,6 +131,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	}
 	tsx.SetTaskID(taskID)
 	tsx.SetCoverageEnabled(as == nil || as.CoverageEnabled(taskID))
+	tsx.SetLab(m.lab)             // lab_status：审计任务探测 Docker/WSL2 可用性（nil=自报不可用）
 	tsx.SetNotify(notify)         // 通用唤醒（无专用回调的写操作走它，debounced）
 	tsx.SetResumeTask(resume)     // set_goals 新增目标 → 把已完成/暂停的任务拉回 running
 	tsx.SetNotifyGoal(notifyGoal) // set_goals 新增目标 → 给 planner 记一条「人新增了目标：…」触发
@@ -131,7 +146,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	// 本任务的工作目录 <workDir>/tasks/<taskID>，先建好。
 	mainDir := ensureRunDir(m.workDir, taskID, 0)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
-	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir), def)
+	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir)+ModeDirective(m.taskMode, "mainagent"), def)
 	opts := agentcore.Options{
 		Provider:        m.prov,
 		SystemPrompt:    system,

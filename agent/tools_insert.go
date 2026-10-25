@@ -692,6 +692,10 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.addTaskScope(),
 		// list_untested_assets：按需查本任务范围内未测资产(类型+分页)，自行决定补测。
 		t.listUntestedAssets(),
+		// lab_status：只读探测本机 Docker / WSL2 内的 Docker Engine 是否可用。
+		// 主 Agent 在审计任务里据此决定「用 add_intent 下发本地验证」还是提示人启动运行时；
+		// lab_up/lab_down 仍只给 worker（避免主 Agent 自己搭环境、跑验证）。
+		t.labStatus(),
 	}
 }
 
