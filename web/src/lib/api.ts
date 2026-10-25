@@ -95,6 +95,7 @@ import type {
   TaskGoal,
   TaskIntelligence,
   TaskLLMResolutions,
+  TaskMode,
   TaskNode,
   TaskSchedule,
   TaskScopeRow,
@@ -303,6 +304,7 @@ export const api = {
     categoryId?: number;
     description: string;
     goal: string;
+    mode?: TaskMode;
     llmProfileIds?: number[];
     sourceTaskIds?: string[];
     companyIds?: number[];
@@ -318,13 +320,14 @@ export const api = {
       category_id: input.categoryId ?? null,
       description: input.description,
       goal: input.goal,
+      mode: input.mode ?? "pentest", // 任务模式;审计类后端默认关覆盖度
       llm_profile_ids: input.llmProfileIds ?? [],
       source_task_ids: input.sourceTaskIds ?? [],
       company_ids: input.companyIds ?? [],
       timeout_seconds: input.timeoutSeconds ?? 0,
       seed_first_intent: input.seedFirstIntent ?? false,
       plan_heartbeat_seconds: input.planHeartbeatSeconds ?? 0, // 0 = 后端归一到默认 600(10min)
-      coverage_enabled: input.coverageEnabled ?? true, // 默认开;false=关闭资产覆盖度功能
+      coverage_enabled: input.coverageEnabled ?? true, // 默认开;false=关闭资产覆盖度功能;审计模式后端缺省时自动关
       intercept_rules: input.interceptRules ?? [], // 任务级资产拦截规则
       schedule: input.schedule ? schedulePayload(input.schedule) : undefined,
     }),

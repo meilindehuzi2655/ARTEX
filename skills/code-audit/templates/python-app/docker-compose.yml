@@ -1,0 +1,15 @@
+services:
+  app:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      # Python 应用通常需要写 sqlite/日志，故挂载可写。
+      - ${LAB_SOURCE:-./src}:/app
+    command: >
+      sh -c "pip install --no-cache-dir -r ${LAB_REQUIREMENTS:-requirements.txt}
+      -i https://pypi.tuna.tsinghua.edu.cn/simple && python ${LAB_ENTRY:-app.py}"
+    environment:
+      FLASK_RUN_HOST: 0.0.0.0
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "${LAB_BIND:-127.0.0.1}:${LAB_PORT_1:-8000}:8000"

@@ -41,7 +41,17 @@ export interface Task {
   archive_blocked_by_task_id?: string; // live direct dependent that must be archived first
   company_ids?: number[]; // associated company scopes; current company assets join the task at creation
   coverage_enabled?: boolean; // 资产覆盖度功能开关(创建时定,默认开)；false=不计算/不展示覆盖度
+  mode?: TaskMode; // 任务模式；缺省/pentest=渗透测试
 }
+
+// 任务模式：pentest=黑盒渗透(默认)；code_audit=源码代码审计；miniprogram_audit=反编译后的小程序源码审计
+export type TaskMode = "pentest" | "code_audit" | "miniprogram_audit";
+
+export const TASK_MODE_LABELS: Record<TaskMode, string> = {
+  pentest: "渗透测试",
+  code_audit: "代码审计",
+  miniprogram_audit: "小程序审计",
+};
 
 export interface TaskCategory {
   id: number;
@@ -967,6 +977,9 @@ export interface Settings {
   // MITM 上游；关闭捕获时直接注入 agent 的 bash/WebFetch。空=直连。
   global_proxy?: string;
   python_interpreter?: string; // 自定义脚本工具的 python 解释器路径(空=运行时检测)
+  // Bash 工具使用的 shell：可填 Git Bash 的 bash.exe 完整路径或其根目录(自动探测 bin/bash.exe)。
+  // 空=平台默认(Windows PowerShell；Linux/macOS bash)。即时生效。
+  bash_shell_path?: string;
   workers?: number; // 并发工作 agent 数(默认3)；对之后启动的任务生效
   // 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
   task_concurrency_enabled?: boolean; // 默认 false

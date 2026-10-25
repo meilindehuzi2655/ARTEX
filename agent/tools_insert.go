@@ -664,6 +664,11 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		t.searchAllWorkerTraces(), t.getWorkerTrace(),
 		// node_detail：worker 拿到 intent_id/节点 id 后可查该节点完整详情（配合上面的回看）。
 		t.nodeDetail(),
+		// extract_archive：解压上传的源码压缩包（代码审计任务第一步；pentest 场景同样可用）。
+		t.extractArchiveTool(),
+		// lab_*：本地靶场（Docker/WSL2），把静态审计发现升级为动态验证。
+		// 未接线（非审计任务/无容器运行时）时工具自报不可用，不影响其它能力。
+		t.labUp(), t.labDown(), t.labStatus(),
 		// 以下工具仍【不给】worker，只留给 planner/main（读上下文、跨 work 复盘是规划职责，
 		// worker 只做单条意图的执行与写回）：list_facts / list_companies / list_worker_traces。
 	}

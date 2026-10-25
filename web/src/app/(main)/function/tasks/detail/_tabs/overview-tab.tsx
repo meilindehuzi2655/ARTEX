@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 import { StatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -28,6 +29,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
+import { TASK_MODE_LABELS } from "@/lib/types";
 import type {
   AssetInterceptKind,
   AssetInterceptRule,
@@ -437,6 +439,9 @@ export function OverviewTab({ taskId }: { taskId: string }) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <TargetIcon className="size-4 text-primary" /> 任务描述与目标
+            {task?.mode && task.mode !== "pentest" && (
+              <Badge variant="secondary">{TASK_MODE_LABELS[task.mode]}</Badge>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">

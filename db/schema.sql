@@ -559,6 +559,12 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS active_llm_profile_id BIGINT REFERENCES llm_profiles(id) ON DELETE SET NULL;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS llm_chain_revision BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+-- 任务模式: pentest(默认,黑盒渗透)/code_audit(源码代码审计)/miniprogram_audit(反编译后的小
+-- 程序源码审计)。模式决定注入给 planner/worker 的指令块与目标拆解指令,不改变引擎结构。
+-- 存量任务默认 pentest 保持原行为。CHECK 采用先 DROP 再 ADD 的幂等重建。
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'pentest';
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_mode_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_mode_check CHECK (mode IN ('pentest','code_audit','miniprogram_audit'));
 CREATE INDEX IF NOT EXISTS idx_tasks_category ON tasks(category_id, created_at DESC)
     WHERE deleted_at IS NULL AND category_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_pinned ON tasks(pinned_at DESC)

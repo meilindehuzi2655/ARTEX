@@ -331,3 +331,23 @@ func TestEvidenceGCGraceAndActiveRestore(t *testing.T) {
 		t.Fatal("accepted tampered snapshot")
 	}
 }
+
+// TestWriteBodyNewBlobOnWindows 回归：Windows 上对目录句柄 fsync 会返回
+// "Access is denied"，导致每个新正文的首次绑定失败（重试因去重而偶然成功）。
+// writeBody 必须在 Windows 上把目录 sync 当尽力而为。
+func TestWriteBodyNewBlobOnWindows(t *testing.T) {
+	s := &Store{Dir: t.TempDir()}
+	body := []byte("unique-body-" + time.Now().Format(time.RFC3339Nano))
+	hash, err := s.writeBody(bytes.NewReader(body), int64(len(body)), "")
+	if err != nil {
+		t.Fatalf("writeBody: %v", err)
+	}
+	path, err := hashPath(s.Dir, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("blob mismatch: %v %q", err, got)
+	}
+}

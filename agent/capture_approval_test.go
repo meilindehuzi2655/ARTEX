@@ -44,7 +44,10 @@ func TestCaptureApprovalLifecycle(t *testing.T) {
 		name, action, status, execution string
 		manual, approve, toolError      bool
 	}{
-		{"model_fallback", "invalid", "allowed", "succeeded", false, false, false},
+		// model_fallback: an unparseable model verdict is not treated as allow —
+		// the failure policy routes it to human approval (default), which times
+		// out after AskTimeoutSeconds and falls back to the configured allow.
+		{"model_fallback", "invalid", "timeout", "succeeded", false, false, false},
 		{"model_allow", "allow", "allowed", "succeeded", false, false, false},
 		{"model_deny", "deny", "denied", "not_executed", false, false, false},
 		{"human_allow_tool_error", "ask", "allowed", "failed", true, true, true},
@@ -112,9 +115,12 @@ func TestCaptureApprovalLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := detail.Audit
+			// The recorded InitialAction is what the model first returned; an
+			// unparseable verdict is reported as "ask" because the failure policy
+			// escalates it to a human (it is never silently rewritten to allow).
 			initialAction := tc.action
 			if tc.action == "invalid" {
-				initialAction = "allow"
+				initialAction = "ask"
 			}
 			wantUserMessage := "record this review"
 			if initialAction == "allow" {
@@ -122,7 +128,13 @@ func TestCaptureApprovalLifecycle(t *testing.T) {
 				// intentionally omit the bulky replay context from the audit row.
 				wantUserMessage = ""
 			}
-			if detail.Status != tc.status || detail.DecisionSource != "model" || a == nil || a.ExecutionStatus != tc.execution || a.ToolUseID != "probe-call" || a.UserMessage != wantUserMessage || a.InitialAction != initialAction || a.ModelFallback != (tc.action == "invalid") || a.ProfileID != 7 {
+			// A human decision is recorded as source "manual"; timeout/model paths
+			// keep the original model source.
+			wantSource := "model"
+			if tc.manual {
+				wantSource = "manual"
+			}
+			if detail.Status != tc.status || detail.DecisionSource != wantSource || a == nil || a.ExecutionStatus != tc.execution || a.ToolUseID != "probe-call" || a.UserMessage != wantUserMessage || a.InitialAction != initialAction || a.ModelFallback != (tc.action == "invalid") || a.ProfileID != 7 {
 				t.Fatalf("unexpected review: row=%+v audit=%+v", detail.InterceptApprovalRow, a)
 			}
 			if initialAction == "allow" && (len(a.Context) != 0 || a.UserTruncated || a.ContextTruncated) {

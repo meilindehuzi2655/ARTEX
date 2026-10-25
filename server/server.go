@@ -47,6 +47,8 @@ type Server struct {
 	skillDir  string // root directory for skill subdirectories
 	jwtKey    []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
 	basicAuth basicAuthGate
+	// lab 是审计任务的本地靶场后端（Docker / WSL2）。New 时构造，GC 协程随服务运行。
+	lab *labManager
 
 	// concMu serializes concurrency-cap decisions (admission + reconcile) so a
 	// scheduler tick and an HTTP settings change / task creation can't both count
@@ -163,7 +165,17 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		if err := s.basicAuth.load(m.pg); err != nil {
 			log.Fatalf("[auth] load HTTP Basic Auth: %v", err)
 		}
+		// Bash 工具使用的 shell：用户可在设置里指定 Git Bash（Windows 默认 PowerShell）。
+		// 非法/失效路径只告警并回落平台默认，不阻断启动。
+		if err := s.applyBashShell(); err != nil {
+			log.Printf("[shell] 应用 Bash shell 配置失败，回落平台默认: %v", err)
+		} else if sh, flags := actool.CurrentShell(); sh != "" {
+			log.Printf("[shell] Bash 工具使用 shell: %s %s", sh, strings.Join(flags, " "))
+		}
 	}
+	// 审计靶场：Docker 后端探测按需进行（首次 lab_* 调用时），GC 随服务常驻。
+	s.lab = newLabManager(m.pg, m.dir)
+	go s.lab.RunGC(ctx, labGCInterval)
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
 	// 之后每次保存策略再推一次（saveLLMRetryPolicy）。
 	s.applyRetryPolicy()
@@ -1539,7 +1551,8 @@ type createTaskReq struct {
 	TimeoutSeconds       int              `json:"timeout_seconds"`             // 任务级超时(秒);0/省略=不限时
 	PlanHeartbeatSeconds int              `json:"plan_heartbeat_seconds"`      // planner 心跳触发间隔(秒);0/省略=默认600(10min);下限=默认=600,低于自动抬到600
 	SeedFirstIntent      *bool            `json:"seed_first_intent,omitempty"` // 创建时直接下发一条种子意图(内容=描述+目标),让 worker 免等首轮 planner 直接开跑;省略/null=默认关闭,走标准先规划再执行。显式传 true 才开(CTF 常一 work 解决时可省掉开跑前的 planner 轮)。
-	CoverageEnabled      *bool            `json:"coverage_enabled,omitempty"`  // 资产覆盖度功能;省略/null=默认开(true)。false=关闭覆盖度计算/展示/自动累积范围+隐藏 add_task_scope/list_untested_assets。company 关联不受影响。
+	CoverageEnabled      *bool            `json:"coverage_enabled,omitempty"`  // 资产覆盖度功能;省略/null=默认开(true)。false=关闭覆盖度计算/展示/自动累积范围+隐藏 add_task_scope/list_untested_assets。company 关联不受影响。审计类模式(code_audit/miniprogram_audit)省略时默认关。
+	Mode                 string           `json:"mode,omitempty"`              // 任务模式: pentest(默认,省略)/code_audit(源码代码审计)/miniprogram_audit(反编译后的小程序源码审计)
 	// InterceptRules 任务级资产拦截/允许规则(创建时录入,存 task_intercept_rules,不进全局表)。
 	InterceptRules []taskInterceptRuleReq `json:"intercept_rules,omitempty"`
 }
@@ -1603,12 +1616,22 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		}
 		schedule = &input
 	}
+	// 任务模式归一(空/未知回落 pentest,与 db 层一致)。审计类模式默认关覆盖度:
+	// 代码审计不产网络侦察语义的测试范围,开着只会给 planner 注入无意义的 coverage 块。
+	mode := db.NormalizeTaskMode(strings.TrimSpace(req.Mode))
+	var coverage *bool
+	if req.CoverageEnabled != nil {
+		coverage = req.CoverageEnabled
+	} else if db.IsAuditMode(mode) {
+		off := false
+		coverage = &off
+	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
 		Schedule: schedule,
 		Name:     strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
 		TimeoutSeconds: req.TimeoutSeconds, PlanHeartbeatSeconds: req.PlanHeartbeatSeconds,
-		CoverageEnabled: req.CoverageEnabled,
+		CoverageEnabled: coverage, Mode: mode,
 		InterceptRules:  interceptRules,
 	})
 	if err != nil {
@@ -3431,6 +3454,7 @@ func (s *Server) settingsPayload() map[string]any {
 		"web_search_proxy":          proxy,                       // 独立出口代理(http/https/socks5)，空=直连
 		"global_proxy":              s.m.GlobalProxy(),           // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
 		"python_interpreter":        strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
+		"bash_shell_path":           bashShellSetting(s.m.pg),    // Bash 工具的 shell（空=平台默认；Windows 可填 Git Bash）
 		"workers":                   s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
 		"task_concurrency_enabled":  concOn,                      // 任务并发上限开关(默认关)
 		"task_concurrency_limit":    concLimit,                   // 同时运行任务上限(开启后默认5)
@@ -3506,6 +3530,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		WebSearchProxy   *string `json:"web_search_proxy"`   // 独立出口代理(http/https/socks5)；null=不改，""=清空
 		GlobalProxy      *string `json:"global_proxy"`       // 全局出口代理(http/https/socks5)；null=不改，""=清空(直连)
 		PythonInterp     *string `json:"python_interpreter"` // 自定义脚本工具的 python 解释器路径
+		BashShell        *string `json:"bash_shell_path"`    // Bash 工具的 shell（Git Bash 的 bash.exe 或其目录）；空=平台默认
 		Workers          *int    `json:"workers"`            // 并发工作 agent 数(>0)；对之后启动的任务生效
 		// 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
 		ConcurrencyEnabled *bool `json:"task_concurrency_enabled"`
@@ -3610,6 +3635,26 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, err.Error())
 			return
 		}
+	}
+	if req.BashShell != nil {
+		// 先解析校验再落库：填错路径当场返回 400，而不是静默保存后在下次启动才失效。
+		// 空串=恢复平台默认（Windows PowerShell / 其他 bash）。
+		resolved, err := resolveBashShell(*req.BashShell)
+		if err != nil {
+			writeErr(w, 400, "Bash shell 路径无效："+err.Error())
+			return
+		}
+		if resolved == "" {
+			actool.SetShellCommand("", nil)
+		} else {
+			actool.SetShellCommand(resolved, []string{"-c"})
+		}
+		// 存用户原始输入（便于回显与迁移），实际执行用解析后的 resolved。
+		if err := s.m.pg.SetSetting(settingBashShell, strings.TrimSpace(*req.BashShell)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		log.Printf("[shell] Bash 工具 shell 已切换为: %s", resolved)
 	}
 	if req.LLMRecord != nil {
 		// 录制器每次调用读取该标志，切换即时生效，无需 applyLLM 重建。

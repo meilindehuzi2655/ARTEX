@@ -2,6 +2,11 @@ module github.com/Autumn-27/artex
 
 go 1.26.3
 
+// 本地 fork：补 tool.SetShellCommand/CurrentShell 钩子，让 Windows 可用 Git Bash
+// 替代默认 PowerShell（见 third_party/norma/tool/task.go）。升级 norma 时需把
+// 上游差异合回该目录。
+replace github.com/Autumn-27/norma => ./third_party/norma
+
 require (
 	mvdan.cc/sh/v3 v3.10.0
 	github.com/Autumn-27/norma v0.4.3

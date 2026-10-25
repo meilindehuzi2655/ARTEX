@@ -85,6 +85,11 @@ type Worker struct {
 	// maxTokensFn resolves the per-reply output cap in tokens, on the same
 	// per-run basis. nil or 0 = send no cap and let the endpoint decide.
 	maxTokensFn func() int
+	// taskMode 是任务模式(pentest/code_audit/miniprogram_audit)。审计模式经
+	// ModeDirective 往系统提示注入审计立场/产出规约/资产关联规约。空=pentest。
+	taskMode string
+	// lab 是本地靶场后端(Docker/WSL2)；nil=lab_* 工具不可用。仅审计任务接线。
+	lab LabRunner
 }
 
 // WorkerSessionID returns the stable transcript key used by a worker intent.
@@ -140,6 +145,13 @@ func (w *Worker) SetConstraintInject(fn func() bool) { w.injectConstraints = fn 
 
 // wantConstraints reports whether constraint injection is enabled (default yes).
 func (w *Worker) wantConstraints() bool { return w.injectConstraints == nil || w.injectConstraints() }
+
+// SetTaskMode 设定任务模式（空/未知=pentest 零侵入）。审计模式经 ModeDirective
+// 注入审计立场与产出规约。agent 实例按任务缓存,创建时设置一次即可。
+func (w *Worker) SetTaskMode(mode string) { w.taskMode = db.NormalizeTaskMode(mode) }
+
+// SetLab 接线本地靶场后端（Docker/WSL2）。nil=lab_* 工具自报不可用。
+func (w *Worker) SetLab(l LabRunner) { w.lab = l }
 
 // SetRunTimeout configures the per-intent wall-clock budget for the main
 // exploration (0 = unlimited). When it fires, the SDK settlement phase still runs
@@ -370,6 +382,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	tsx.SetOwnerNode(intent.ID)         // assets this worker discovers anchor to its intent → visible to the task
 	tsx.SetEnrich(enr)                  // async DNS/HTTP auto-completion for assets this worker writes
 	tsx.SetNotifyFinding(notifyFinding) // report_finding 落库时当场唤醒 planner，带上「哪个意图+finding」
+	tsx.SetLab(w.lab)                   // 本地靶场（审计任务的动态验证）；nil 时 lab_* 自报不可用
 	// base = built-in worker tools ∪ host tools (traffic) ∪ default tools (incl. Bash);
 	// then augment with the agent's visible skills/MCP. During the SDK settlement
 	// phase, Bash is hidden via Settlement.DisabledTools (no local gating needed).
@@ -397,6 +410,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
 	}
+	sysBody += ModeDirective(w.taskMode, "worker") // 任务模式(审计类)注入审计立场与产出规约;pentest 为空
 	// 意图块 → 意图锚定资产块 → 启动指令，依次追加到 system 尾部（与 constraintBlock 同一套追加法）。
 	sysBody += renderIntentTask(intent)
 	if as != nil {

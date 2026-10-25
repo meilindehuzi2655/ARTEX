@@ -135,8 +135,10 @@ import type {
   TaskArchive,
   TaskArchiveState,
   TaskCategory,
+  TaskMode,
   TaskStatus,
 } from "@/lib/types";
+import { TASK_MODE_LABELS } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 // fmtBytes renders a human file size for the upload manifest.
@@ -1219,13 +1221,20 @@ const TaskRow = React.memo(function TaskRow({
         <RemarkEditor value={task.remark} label={`任务 #${task.id}`} onSave={(remark) => onRemark(task, remark)} />
       </TableCell>
       <TableCell className="text-muted-foreground max-w-40">
-        <Link
-          href={`/function/tasks/detail?id=${encodeURIComponent(task.id)}`}
-          className="block truncate rounded-sm hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          title={task.description}
-        >
-          {task.description}
-        </Link>
+        <div className="flex items-center gap-1.5">
+          {task.mode && task.mode !== "pentest" && (
+            <Badge variant="secondary" className="shrink-0">
+              {TASK_MODE_LABELS[task.mode]}
+            </Badge>
+          )}
+          <Link
+            href={`/function/tasks/detail?id=${encodeURIComponent(task.id)}`}
+            className="block truncate rounded-sm hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title={task.description}
+          >
+            {task.description}
+          </Link>
+        </div>
       </TableCell>
       <TableCell className="text-muted-foreground max-w-40 truncate" title={task.goal}>
         {task.goal}
@@ -3107,6 +3116,7 @@ function CreateTaskSheet({
   const [categoryID, setCategoryID] = React.useState<number | undefined>(undefined);
   const [description, setDescription] = React.useState("");
   const [goal, setGoal] = React.useState("");
+  const [mode, setMode] = React.useState<TaskMode>("pentest"); // 任务模式;审计类走静态代码审计流程
   const [selectedTemplateID, setSelectedTemplateID] = React.useState<number | null>(null);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [companies, setCompanies] = React.useState<Company[]>([]);
@@ -3190,6 +3200,7 @@ function CreateTaskSheet({
         categoryId: categoryID,
         description: description.trim(),
         goal: goal.trim(),
+        mode,
         llmProfileIds: llmProfileIDs.map(Number),
         sourceTaskIds: sourceTaskIDs,
         companyIds: companyIDs,
@@ -3207,6 +3218,7 @@ function CreateTaskSheet({
       setCategoryID(undefined);
       setDescription("");
       setGoal("");
+      setMode("pentest");
       setSelectedTemplateID(null);
       setSourceTaskIDs([]);
       setCompanyIDs([]);
@@ -3280,11 +3292,60 @@ function CreateTaskSheet({
               <Label htmlFor="name">名称（可选）</Label>
               <Input
                 id="name"
-                placeholder="给任务起个便于识别的名字，例如：Acme 官网渗透"
+                placeholder={
+                  mode === "code_audit"
+                    ? "给任务起个便于识别的名字，例如：Acme 商城源码审计"
+                    : mode === "miniprogram_audit"
+                      ? "给任务起个便于识别的名字，例如：XX 小程序审计"
+                      : "给任务起个便于识别的名字，例如：Acme 官网渗透"
+                }
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
+            {/* 任务模式:决定 planner/worker 的指令块与目标拆解方式。审计类默认关覆盖度。 */}
+            <FieldSet>
+              <FieldLegend>任务模式</FieldLegend>
+              <div className="grid grid-cols-3 gap-2">
+                {(Object.keys(TASK_MODE_LABELS) as TaskMode[]).map((m) => (
+                  <label
+                    key={m}
+                    className={cn(
+                      "border-input bg-background has-checked:border-primary has-checked:bg-primary/5 flex cursor-pointer flex-col gap-1 rounded-lg border p-3 text-sm transition-colors",
+                    )}
+                  >
+                    <span className="flex items-center gap-2 font-medium">
+                      <input
+                        type="radio"
+                        name="task-mode"
+                        className="accent-primary"
+                        checked={mode === m}
+                        onChange={() => {
+                          setMode(m);
+                          // 审计类模式默认关覆盖度(代码审计不产网络侦察语义的测试范围);换回渗透恢复默认开。
+                          setCoverageEnabled(m === "pentest");
+                        }}
+                      />
+                      {TASK_MODE_LABELS[m]}
+                    </span>
+                    <span className="text-muted-foreground text-xs">
+                      {m === "pentest"
+                        ? "黑盒渗透：资产测绘 + 漏洞验证"
+                        : m === "code_audit"
+                          ? "静态审计上传的源码包（Java/PHP/Python/JS）"
+                          : "静态审计反编译后的小程序源码"}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <FieldDescription>
+                {mode === "pentest"
+                  ? "标准渗透任务：planner 按攻击面拆意图，worker 跑真实工具探测验证。"
+                  : mode === "code_audit"
+                    ? "上传源码压缩包（.zip/.tar.gz），agent 解包后按模块静态审计；只读代码、不访问目标，发现的后端端点登记为资产。"
+                    : "上传反编译后的小程序源码包（app.json/pages/ 结构），agent 按 miniprogram-audit 技能专项检查；AppSecret 硬编码、API 端点提取是重点。"}
+              </FieldDescription>
+            </FieldSet>
             <Field>
               <FieldLabel htmlFor="task-category">任务分类</FieldLabel>
               <CategoryPicker
@@ -3417,7 +3478,13 @@ function CreateTaskSheet({
               <Textarea
                 id="description"
                 className="min-h-32"
-                placeholder="测试对象与背景，例如：测试 example.com 这个站点"
+                placeholder={
+                  mode === "code_audit"
+                    ? "审计对象与背景，例如：商城源码包已上传（路径见下方），重点看支付与后台模块"
+                    : mode === "miniprogram_audit"
+                      ? "审计对象与背景，例如：小程序反编译产物已上传（路径见下方），关注登录态与支付逻辑"
+                      : "测试对象与背景，例如：测试 example.com 这个站点"
+                }
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
@@ -3438,12 +3505,18 @@ function CreateTaskSheet({
                   disabled={uploading}
                 >
                   {uploading ? <Loader2Icon className="animate-spin" /> : <PaperclipIcon />}
-                  上传文件
+                  {mode === "code_audit" ? "上传源码包" : mode === "miniprogram_audit" ? "上传小程序源码" : "上传文件"}
                 </Button>
                 <span className="text-muted-foreground text-xs">
                   {uploadCount > 0
-                    ? `已上传 ${uploadCount} 个文件，绝对路径已追加到描述末尾（可编辑）`
-                    : "可多选；上传后把文件的绝对路径追加到描述，供 worker 用 Read/Bash 打开"}
+                    ? "已上传 " +
+                      uploadCount +
+                      " 个文件，绝对路径已追加到描述末尾（可编辑）"
+                    : mode === "code_audit"
+                      ? "支持 .zip / .tar.gz；agent 会用 extract_archive 解包后审计"
+                      : mode === "miniprogram_audit"
+                        ? "上传反编译产物压缩包（app.json / pages / 结构）；wxapkg 需先在外部反编译"
+                        : "可多选；上传后把文件的绝对路径追加到描述，供 worker 用 Read/Bash 打开"}
                 </span>
               </div>
             </div>
@@ -3452,7 +3525,13 @@ function CreateTaskSheet({
               <Textarea
                 id="goal"
                 className="min-h-32"
-                placeholder="要达成什么，例如：拿下后台管理权限、获取服务器权限"
+                placeholder={
+                  mode === "pentest"
+                    ? "要达成什么，例如：拿下后台管理权限、获取服务器权限"
+                    : mode === "code_audit"
+                      ? "审计达成什么，例如：找出全部高危漏洞并梳理后端 API 攻击面"
+                      : "审计达成什么，例如：提取全部后端接口、找出密钥与逻辑漏洞"
+                }
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
               />
@@ -3466,8 +3545,11 @@ function CreateTaskSheet({
                 portalContainer={sheetContentRef}
               />
               <FieldDescription>
-                最多关联 {MAX_SOURCE_TASKS}{" "}
-                个任务。实时只读继承所选任务的持久化黑板、资产范围及相关流量；新任务写入独立黑板。
+                {mode === "pentest"
+                  ? "最多关联 " + MAX_SOURCE_TASKS + " 个任务。实时只读继承所选任务的持久化黑板、资产范围及相关流量；新任务写入独立黑板。"
+                  : "审计模式同样适用：关联已有的渗透/审计任务，可复用其发现的资产与情报（例如此前扫到的端点指纹）。最多 " +
+                    MAX_SOURCE_TASKS +
+                    " 个，实时只读继承；新任务写入独立黑板。"}
               </FieldDescription>
             </Field>
             <Field>
@@ -3479,8 +3561,9 @@ function CreateTaskSheet({
                 portalContainer={sheetContentRef}
               />
               <FieldDescription>
-                创建任务时会将所选企业当前已有资产加入“测试资产”，并将域名、IP、CIDR、ICP 和企业关键词提供给 Agent
-                作为范围上下文；不会自动生成意图或强制改变执行目标。
+                {mode === "pentest"
+                  ? "创建任务时会将所选企业当前已有资产加入“测试资产”，并将域名、IP、CIDR、ICP 和企业关键词提供给 Agent 作为范围上下文；不会自动生成意图或强制改变执行目标。"
+                  : "审计模式下用于人工指定「这份代码属于哪些已有资产」：企业范围让代码中出现的域名自动归因到企业，与已有资产归并。"}
               </FieldDescription>
             </Field>
             <Field>

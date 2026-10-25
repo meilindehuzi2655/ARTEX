@@ -39,6 +39,9 @@ type Planner struct {
 	noaEnabledFn      func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn       func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor         *Compactor                             // cold-node compaction (§7); nil = disabled
+	// taskMode 是任务模式(pentest/code_audit/miniprogram_audit)。审计模式经
+	// ModeDirective 注入「意图按代码结构拆分、不做网络侦察」等指令。空=pentest。
+	taskMode string
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -91,6 +94,10 @@ func (p *Planner) compactionWindow() int {
 // SetProxy points the planner's WebFetch at the recording proxy plus the CA cert
 // it trusts to verify HTTPS through it (empty addr = direct).
 func (p *Planner) SetProxy(addr, caCert string) { p.proxyAddr, p.proxyCACert = addr, caCert }
+
+// SetTaskMode 设定任务模式（空/未知=pentest 零侵入）。审计模式经 ModeDirective
+// 注入规划方式指令。agent 实例按任务缓存,创建时设置一次即可。
+func (p *Planner) SetTaskMode(mode string) { p.taskMode = db.NormalizeTaskMode(mode) }
 
 // SetWebSearch selects the web_search backend for the planner (off by default).
 func (p *Planner) SetWebSearch(o WebSearchOpts) { p.webSearch = o }
@@ -394,6 +401,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
 	}
+	sysBody += ModeDirective(p.taskMode, "planner") // 任务模式(审计类)注入规划方式指令;pentest 为空
 	system, boundary := deferredSystem(sysBody, def)
 	// planner 无自身墙钟预算;有 deadline 时把 MaxDuration 夹逼到剩余,让在跑的规划轮在
 	// 任务到点时进收尾(因超时→任务超时词,因步数→per-run 词)。

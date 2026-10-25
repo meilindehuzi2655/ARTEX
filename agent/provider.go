@@ -108,6 +108,10 @@ const (
 	maxWindowK     = 1000 // cap at 1M tokens (user request)
 )
 
+// defaultLLMUserAgent 是 LLM 请求未显式设置 UA 时使用的常规浏览器 UA。
+// 部分网关（Cloudflare 前置）会按 UA 拦截 Go 默认的 "Go-http-client/1.1"。
+const defaultLLMUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+
 // CompactionWindow returns the model context window in TOKENS for compaction
 // thresholds, resolved from the user-configured size (ContextWindowK). 0/unset →
 // a 200K default; otherwise clamped to [32K, 1M] so compaction stays effective.
@@ -220,8 +224,11 @@ func ConfigFrom(provider, model, baseURL, apiKey, proxy string) Config {
 		}
 	default:
 		c.Format = llm.FormatAnthropic
-		// provider appends "/v1/messages".
+		// provider appends "/v1/messages"; tolerate both a full endpoint URL and
+		// the common "…/v1" base copied from an OpenAI-compatible gateway — the
+		// latter would otherwise become "…/v1/v1/messages" and 404.
 		c.BaseURL = strings.TrimRight(strings.TrimSuffix(c.BaseURL, "/v1/messages"), "/")
+		c.BaseURL = strings.TrimRight(strings.TrimSuffix(c.BaseURL, "/v1"), "/")
 		if c.Model == "" {
 			c.Model = "claude-opus-4-8"
 		}
@@ -351,6 +358,11 @@ type quotaAwareTransport struct {
 }
 
 func (t quotaAwareTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// 默认 UA：部分 LLM 网关前面挂了 Cloudflare，会按 UA 拦截 Go 默认的
+	// "Go-http-client/1.1"（返回 1010）。请求未显式设置 UA 时补一个常规浏览器 UA。
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", defaultLLMUserAgent)
+	}
 	// Custom session-id header: name is user-configured, value is THIS run's
 	// session id (norma stashes it on the context via transcript.WithSessionID).
 	// Stable across a session's turns and distinct across sessions — exactly what

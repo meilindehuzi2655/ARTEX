@@ -51,6 +51,10 @@ type Task struct {
 	// list_untested_assets、态势里不注入 coverage 块(scope 字段仍保留)。company 关联
 	// (task_scope kind=company)与此开关无关，永不受影响。见 db/task_scope.go。
 	CoverageEnabled bool `json:"coverage_enabled"`
+	// Mode 是任务模式: pentest(默认,黑盒渗透)/code_audit(源码代码审计)/miniprogram_audit
+	// (反编译后的小程序源码审计)。空串等价 pentest。决定注入 planner/worker 的 mode 指令块
+	// 与目标拆解指令,不改变引擎结构。见 agent/modeblock.go。
+	Mode string `json:"mode,omitempty"`
 }
 
 // TaskDeleteResult reports optional related-data cleanup performed in the same
@@ -74,6 +78,31 @@ type TaskDeletePreparation struct {
 // 单一真源，替换散落各处的 done/failed 硬编码判定。
 func IsTerminal(status string) bool {
 	return status == "done" || status == "failed" || status == "timeout"
+}
+
+// 任务模式常量。pentest 是缺省模式;两个审计模式注入专属指令块(见 agent/modeblock.go)
+// 并默认关闭覆盖度,引擎结构(planner/worker 循环)不变。
+const (
+	TaskModePentest         = "pentest"
+	TaskModeCodeAudit       = "code_audit"
+	TaskModeMiniprogramAudit = "miniprogram_audit"
+)
+
+// NormalizeTaskMode 归一任务模式:空串/未知值一律回落 pentest(与 schema 默认值一致)。
+// 未知值不报错而是回落——旧客户端/编排工具传脏值时保持可用比拒绝创建更重要。
+func NormalizeTaskMode(mode string) string {
+	switch mode {
+	case TaskModeCodeAudit, TaskModeMiniprogramAudit:
+		return mode
+	default:
+		return TaskModePentest
+	}
+}
+
+// IsAuditMode 报告该模式是否为审计类(代码审计/小程序审计),用于覆盖度默认值与
+// 网络探测(enrich)门控等模式分支。
+func IsAuditMode(mode string) bool {
+	return mode == TaskModeCodeAudit || mode == TaskModeMiniprogramAudit
 }
 
 // CreateTask creates an exploration + task in one transaction and returns the task.
@@ -156,6 +185,9 @@ type TaskCreateOptions struct {
 	// CoverageEnabled 是「资产覆盖度功能」开关;nil=默认开(true)，让不关心该开关的创建
 	// 路径(编排 spawn、老 API)沿用原行为。仅 web 创建任务时可显式传 false 关闭。
 	CoverageEnabled *bool
+	// Mode 是任务模式(pentest/code_audit/miniprogram_audit);空串归一为 pentest。
+	// 见 Task.Mode 字段注释。
+	Mode string
 	// InterceptRules 是任务级资产拦截规则,创建时随任务在同一事务内写入 task_intercept_rules。
 	InterceptRules []TaskInterceptRuleInput
 }
@@ -200,6 +232,7 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 	}
 	opts.PlanHeartbeatSeconds = normalizeHeartbeat(opts.PlanHeartbeatSeconds)
 	coverageEnabled := opts.CoverageEnabled == nil || *opts.CoverageEnabled
+	taskMode := NormalizeTaskMode(opts.Mode)
 	var categoryName string
 	if opts.CategoryID != nil {
 		if *opts.CategoryID <= 0 {
@@ -225,12 +258,12 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 		SourceTaskIDs:  append([]int64(nil), opts.SourceTaskIDs...),
 		CompanyIDs:     append([]int64(nil), opts.CompanyIDs...),
 		TimeoutSeconds: opts.TimeoutSeconds, PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
-		CoverageEnabled: coverageEnabled,
+		CoverageEnabled: coverageEnabled, Mode: taskMode,
 	}
 	if err := tx.QueryRow(`
-INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled)
-VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9)
-RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
+INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled, mode)
+VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10)
+RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled, taskMode).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	if err := insertTaskRelations(tx, t.ID, opts.SourceTaskIDs); err != nil {
@@ -363,11 +396,11 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 
 const taskCols = `id, COALESCE(name,''), remark, category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
-description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at`
+description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, COALESCE(mode,'pentest')`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.Remark, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt); err != nil {
+	if err := sc.Scan(&t.ID, &t.Name, &t.Remark, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.Mode); err != nil {
 		return nil, err
 	}
 	t.Pinned = t.PinnedAt != nil

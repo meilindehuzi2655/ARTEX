@@ -1,0 +1,36 @@
+# Java 应用模板：默认按可执行 jar 运行（LAB_JAR 指定 jar 名）。
+# WAR/Tomcat 项目改用 tomcat:9-jdk17，把 LAB_SOURCE 挂到 /usr/local/tomcat/webapps/ROOT。
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${LAB_DB_PASS:-labpass}
+      MYSQL_DATABASE: ${LAB_DB_NAME:-app}
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${LAB_DB_PASS:-labpass}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  app:
+    image: eclipse-temurin:21-jre
+    working_dir: /app
+    volumes:
+      - ${LAB_SOURCE:-./src}:/app:ro
+    command: sh -c "java ${JAVA_OPTS:--Xms128m -Xmx512m} -jar ${LAB_JAR:-app.jar}"
+    environment:
+      DB_HOST: db
+      DB_NAME: ${LAB_DB_NAME:-app}
+      DB_USER: root
+      DB_PASS: ${LAB_DB_PASS:-labpass}
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/${LAB_DB_NAME:-app}?useSSL=false&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${LAB_DB_PASS:-labpass}
+    ports:
+      - "${LAB_BIND:-127.0.0.1}:${LAB_PORT_1:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy

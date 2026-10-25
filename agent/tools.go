@@ -107,6 +107,9 @@ type ToolSet struct {
 	// the planner having to spot it folded into the graph overview. Wired for the main
 	// agent + cross-task orchestration; nil elsewhere → falls back to the bare notify.
 	notifyHint func(texts []string)
+	// lab, if set, is the local sandbox backend (Docker/WSL2) used by lab_up/lab_down/
+	// lab_status for dynamic verification of audit findings. nil = tools report unavailable.
+	lab LabRunner
 }
 
 // SetNotifyGoal wires the goal-add trigger callback (see ToolSet.notifyGoal). Set only
@@ -523,9 +526,9 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	out["related_tasks"] = t.relatedTaskOverviews()
 	// coverage：粗略的资产测试覆盖度参考——范围(task_scope)内的资产里，被 fact 碰过的
 	// 占比 + by_type(按类型的 总数/已测)。要看未测的具体资产由 agent 按需调 list_untested_assets 自行判断。仅任务上下文有。
-	// 资产覆盖度功能关闭时(coverageDisabled)：只保留 host_count(目标主机数的感知信息)，
-	// 丢弃 denominator/tested/pct/by_type/note 等覆盖度度量，避免污染上下文、也不诱导
-	// 已隐藏的 add_task_scope/list_untested_assets。
+	// 资产覆盖度功能关闭时(coverageDisabled)：只保留 scope(授权边界)与 host_count(目标主机
+	// 数的感知信息)，丢弃 denominator/tested/pct/by_type/note 等覆盖度度量，避免污染上下文、
+	// 也不诱导已隐藏的 add_task_scope/list_untested_assets。
 	if t.as != nil && t.ts != nil && t.taskID > 0 {
 		{
 			m := map[string]any{}
@@ -543,6 +546,14 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 					}
 				}
 			}
+			// scope：本任务的授权边界（task_scope），company 行展开其规则与关键词。
+			// 与覆盖度开关无关——关掉覆盖度只该停止算指标，不该让 agent 忘记范围。
+			if scopeRows, omitted := t.taskScopeContext(); len(scopeRows) > 0 {
+				m["scope"] = scopeRows
+				if omitted > 0 {
+					m["scope_omitted"] = omitted
+				}
+			}
 			if hosts, err := t.as.HostsByTaskWithSources(t.taskID); err == nil {
 				// 只给主机总数，不再把 host 列表平铺进 graph_overview（大范围任务里那是每轮
 				// 都重复携带的大量字符串，对规划决策价值有限）；具体主机按需 list_assets 查。
@@ -554,6 +565,86 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		}
 	}
 	return out
+}
+
+// taskScopeContext 把本任务的 task_scope 蒸馏成 graph_overview 的 scope 行。
+// company 行会展开企业范围规则与关键词——agent 需要看到真实的授权边界，而不只是
+// 一个 company_id。返回被截断的 scope 行数（0=未截断）。
+//
+// 上限刻意很小：这是每轮规划都携带的上下文，大企业可能录入上千条 IP/域名规则，
+// 全量展开会挤占决策信息。被截断时只给计数，agent 仍可用 list_assets 按范围查询。
+func (t *ToolSet) taskScopeContext() ([]map[string]any, int) {
+	if t.as == nil || t.taskID <= 0 {
+		return nil, 0
+	}
+	scopes, err := t.as.ListTaskScope(t.taskID)
+	if err != nil || len(scopes) == 0 {
+		return nil, 0
+	}
+	const maxScopeRows, maxCompanyRules = 30, 50
+	rows := make([]map[string]any, 0, len(scopes))
+	for i, sc := range scopes {
+		if i >= maxScopeRows {
+			return rows, len(scopes) - maxScopeRows
+		}
+		row := map[string]any{"kind": sc.Kind}
+		if sc.Source != "" {
+			row["source"] = sc.Source
+		}
+		switch {
+		case sc.Domain != "":
+			row["value"] = sc.Domain
+		case sc.Net != "":
+			row["value"] = sc.Net
+		case sc.Value != "":
+			row["value"] = sc.Value
+		}
+		if sc.CompanyID != nil {
+			row["company_id"] = *sc.CompanyID
+			if sc.CompanyName != "" {
+				row["company_name"] = sc.CompanyName
+			}
+			if t.cs != nil {
+				if rules, err := t.cs.GetScope(*sc.CompanyID); err == nil && len(rules) > 0 {
+					expanded := make([]map[string]any, 0, min(len(rules), maxCompanyRules))
+					keywords := make([]string, 0)
+					for j, rule := range rules {
+						if j >= maxCompanyRules {
+							row["company_scope_truncated"] = len(rules) - maxCompanyRules
+							break
+						}
+						// raw 保留用户原始写法（ip 的 /128、icp 的大小写与空格），
+						// 比归一化后的 domain/net/value 更适合给人看。
+						value := rule.Raw
+						if value == "" {
+							switch {
+							case rule.Domain != "":
+								value = rule.Domain
+							case rule.Net != "":
+								value = rule.Net
+							default:
+								value = rule.Value
+							}
+						}
+						entry := map[string]any{"kind": rule.Kind}
+						if value != "" {
+							entry["value"] = value
+						}
+						expanded = append(expanded, entry)
+						if rule.Kind == "keyword" && value != "" {
+							keywords = append(keywords, value)
+						}
+					}
+					row["company_scope"] = expanded
+					if len(keywords) > 0 {
+						row["company_keywords"] = keywords
+					}
+				}
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows, 0
 }
 
 func inheritedMap(m map[string]any, sourceTaskID int64) map[string]any {

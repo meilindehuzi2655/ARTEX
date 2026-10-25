@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { CpuIcon, FlaskConicalIcon, KeyboardIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
+import { CpuIcon, FlaskConicalIcon, KeyboardIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon, TerminalIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,9 @@ export default function SystemSettingsPage() {
   const [saving, setSaving] = React.useState(false);
   const [savingKey, setSavingKey] = React.useState(false);
   const [pyInterp, setPyInterp] = React.useState("");
+  // Bash 工具的 shell（Windows 可指定 Git Bash；空=平台默认）。
+  const [bashShell, setBashShell] = React.useState("");
+  const [savingBash, setSavingBash] = React.useState(false);
   const [workers, setWorkers] = React.useState("3");
   const [savingWorkers, setSavingWorkers] = React.useState(false);
   // 操作约束注入范围(默认都开)。
@@ -66,6 +69,7 @@ export default function SystemSettingsPage() {
     setProxyInput(s.web_search_proxy ?? "");
     setGlobalProxyInput(s.global_proxy ?? "");
     setPyInterp(s.python_interpreter ?? "");
+    setBashShell(s.bash_shell_path ?? "");
     setWorkers(String(s.workers ?? 3));
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
@@ -99,6 +103,18 @@ export default function SystemSettingsPage() {
       })
       .catch((e) => toast.error("保存失败：" + (e as Error).message))
       .finally(() => setSaving(false));
+  };
+
+  const saveBashShell = () => {
+    setSavingBash(true);
+    api
+      .setSettings({ bash_shell_path: bashShell.trim() })
+      .then((s) => {
+        apply(s);
+        toast.success(bashShell.trim() ? "已切换 Bash 工具使用的 shell" : "已恢复平台默认 shell");
+      })
+      .catch((e) => toast.error("保存失败：" + (e as Error).message))
+      .finally(() => setSavingBash(false));
   };
   const detectPython = () => {
     setSaving(true);
@@ -711,6 +727,37 @@ export default function SystemSettingsPage() {
                 </Button>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <TerminalIcon className="size-4" />
+              运行环境 · Shell（Git Bash）
+            </CardTitle>
+            <CardDescription>
+              Agent 的 <b>Bash</b> 工具用它执行命令。Windows 默认 PowerShell（Unix 命令如 grep/sed 不可用）；
+              填 Git Bash 后可用完整的 Unix 工具链，代码审计等场景推荐。可填 <b>bash.exe</b> 的完整路径，或 Git
+              Bash 根目录（自动探测 <code>bin/bash.exe</code>）。留空 = 平台默认。保存后立即生效。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <Input
+                className="font-mono text-sm"
+                placeholder="C:\Program Files\Git\bin\bash.exe（留空=平台默认）"
+                value={bashShell}
+                disabled={!loaded || savingBash}
+                onChange={(e) => setBashShell(e.target.value)}
+              />
+              <Button onClick={saveBashShell} disabled={!loaded || savingBash}>
+                保存
+              </Button>
+            </div>
+            <p className="text-muted-foreground text-xs">
+              示例目录：C:\Program Files\software\opens\OpenSquilla\resources\runtime\developer\windows-x64\git-bash
+            </p>
           </CardContent>
         </Card>
 

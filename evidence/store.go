@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -112,7 +113,12 @@ func (s *Store) writeBody(r io.Reader, expectedLength int64, expectedHash string
 		return "", err
 	}
 	defer d.Close()
-	return hash, d.Sync()
+	// Windows 不允许对目录句柄 FlushFileBuffers（返回 Access is denied）。文件本体
+	// 已经 rename 到位，这里只是尽力把目录项刷盘；非 Windows 仍要求成功。
+	if err := d.Sync(); err != nil && runtime.GOOS != "windows" {
+		return "", err
+	}
+	return hash, nil
 }
 
 // StageFindingsExport freezes bindings/report versions and makes private body

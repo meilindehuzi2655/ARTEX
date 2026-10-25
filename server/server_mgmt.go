@@ -176,6 +176,7 @@ func (s *Server) pgDeleteTask(w http.ResponseWriter, r *http.Request) {
 			s.taskAgentMu.Lock()
 			delete(s.taskAgents, id)
 			s.taskAgentMu.Unlock()
+			s.cleanupTaskLabs(id)
 			deleted = true
 			writeCommittedTaskDelete(w, result, err)
 			return
@@ -190,8 +191,21 @@ func (s *Server) pgDeleteTask(w http.ResponseWriter, r *http.Request) {
 	s.taskAgentMu.Lock()
 	delete(s.taskAgents, id)
 	s.taskAgentMu.Unlock()
+	s.cleanupTaskLabs(id)
 	deleted = true
 	writeJSON(w, 200, result)
+}
+
+// cleanupTaskLabs 异步清理该任务的全部本地靶场（容器/网络/卷）。失败不影响删除。
+func (s *Server) cleanupTaskLabs(taskID string) {
+	if s.lab == nil {
+		return
+	}
+	id, err := strconv.ParseInt(taskID, 10, 64)
+	if err != nil || id <= 0 {
+		return
+	}
+	go s.lab.DownTask(context.Background(), id)
 }
 
 func writeCommittedTaskDelete(w http.ResponseWriter, result DeleteTaskResult, err error) {

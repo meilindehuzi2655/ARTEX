@@ -1,0 +1,31 @@
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${LAB_DB_PASS:-labpass}
+      MYSQL_DATABASE: ${LAB_DB_NAME:-app}
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${LAB_DB_PASS:-labpass}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build: .
+    volumes:
+      # LAB_SOURCE 由 lab_up 注入（已按 Docker/WSL 后端转换好路径）。
+      - ${LAB_SOURCE:-./src}:/var/www/html:ro
+    environment:
+      DB_HOST: db
+      DB_NAME: ${LAB_DB_NAME:-app}
+      DB_USER: root
+      DB_PASS: ${LAB_DB_PASS:-labpass}
+    ports:
+      # 端口必须用 LAB_BIND/LAB_PORT_N，由 lab_up 分配；不要硬编码。
+      - "${LAB_BIND:-127.0.0.1}:${LAB_PORT_1:-8080}:80"
+    depends_on:
+      db:
+        condition: service_healthy

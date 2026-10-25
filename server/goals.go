@@ -30,7 +30,12 @@ func (s *Server) launchTask(t *Task, seedText string, seedFirstIntent bool) {
 	if !s.engine.beginTaskOperation(t.ID) {
 		return
 	}
-	s.seed(t, seedText)
+	// 审计类任务跳过 seed：描述里是上传的源码包路径/模块名，不是网络靶标——
+	// parseTarget 会把 "xxx.zip" 误判成 https://xxx.zip 站点种进资产图。
+	// 审计发现的域名/端点由 agent 走 insert_assets 按需登记。
+	if !db.IsAuditMode(db.NormalizeTaskMode(t.Mode)) {
+		s.seed(t, seedText)
+	}
 	if seedFirstIntent {
 		s.seedFirstIntent(t)
 	}
@@ -409,9 +414,12 @@ func (s *Server) createGoals(ctx context.Context, t *Task, emit func(db.Activity
 		as = s.m.Assets()
 	}
 	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
+	// 任务模式指令(审计类)追加进描述喂给目标拆解器:按审计范围而非渗透里程碑拆 goal。
+	// pentest 返回空串,行为不变。
+	decomposeDesc := t.Description + agent.ModeGoalDirective(t.Mode)
 	s.engine.BeginLLMCall(t.ID)
 	goalRuntime := s.agentsForTask(t).runtime
-	decomposed := agent.DecomposeGoalsWithProvider(ctx, goalRuntime, s.m.dir, t.Goal, t.Description, as, t.Store, taskID, goalRuntime.nonStreaming(), goalRuntime.maxTokens(), emit)
+	decomposed := agent.DecomposeGoalsWithProvider(ctx, goalRuntime, s.m.dir, t.Goal, decomposeDesc, as, t.Store, taskID, goalRuntime.nonStreaming(), goalRuntime.maxTokens(), emit)
 	s.engine.EndLLMCall(t.ID)
 	for _, g := range decomposed {
 		if strings.TrimSpace(g.Text) != "" {
