@@ -14,17 +14,53 @@ Go 1.26 + Next.js 16 + PostgreSQL · 单二进制内嵌前端
 
 ---
 
+## ✨ 二开亮点
+
+> 保留上游的双图引擎、planner/worker 协作、三级审批与流量录制，把 ARTEX 从「黑盒渗透」扩展为
+> 「渗透 + 源码审计 + 小程序审计」的一体化平台。
+
+| 🧭 三种任务模式 | 🧪 本地靶场 | 🪟 Windows 友好 |
+| :---: | :---: | :---: |
+| **渗透测试 / 代码审计 / 小程序审计**<br>创建任务即选，planner 与 worker 自动切换审计立场、产出规约与资产关联方式 | **`lab_up` 一次性环境**<br>用 Docker 或 WSL2 在 `127.0.0.1` 起靶场，把静态发现升级为带流量证据的动态验证 | **Git Bash + WSL2**<br>Bash 工具可切 Git Bash，靶场支持 WSL2 内的 Docker Engine，不再受 PowerShell 限制 |
+
+| 创建任务时选择模式（图中为「代码审计」） | Windows：Bash 工具切换 Git Bash |
+| :---: | :---: |
+| ![任务模式选择](screenshots/fork-task-modes.png) | ![Git Bash 设置](screenshots/fork-git-bash.png) |
+
+| 本地靶场：两次 `lab_up`（第二次 `reuse=true`）返回同一环境 |
+| :---: |
+| ![本地靶场](screenshots/fork-local-lab.png) |
+
+| 任务列表直接标注模式 |
+| :---: |
+| ![任务列表模式徽章](screenshots/fork-task-list.png) |
+
+**还有：**
+
+- `extract_archive`：解包 `.zip` / `.tar.gz`，带 zip-slip 防护、5 万条目 / 2GiB 上限；
+- 内置 `code-audit` / `miniprogram-audit` 技能，自带 PHP / Java / Node / Python 靶场模板；
+- 修复 Anthropic Base URL 以 `/v1` 结尾时拼成 `/v1/v1/messages`、`graph_overview` 缺失任务 scope 等问题。
+
+### 上游 vs 本二开版
+
+| 能力 | 上游 | 本二开版 |
+| --- | :---: | :---: |
+| 黑盒渗透（资产测绘 / 漏洞验证） | ✅ | ✅ |
+| 源码代码审计模式 | — | ✅ |
+| 小程序代码审计模式 | — | ✅ |
+| 本地靶场（Docker / WSL2） | — | ✅ |
+| `extract_archive` 解包工具 | — | ✅ |
+| Windows Git Bash 配置 | — | ✅ |
+| 审计技能与靶场模板 | — | ✅ |
+| 双图引擎 / 三级审批 / 流量录制 | ✅ | ✅（保留） |
+
+---
+
 ## 二开说明
 
 本仓库是 [RuoJi6/ARTEX](https://github.com/RuoJi6/ARTEX) 的独立二开分支（上游源自
-[Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)），保留原有的双图引擎、planner/worker
-协作、三级审批与流量录制，在此基础上新增：
-
-- **任务模式**：渗透测试 / 源码代码审计 / 小程序代码审计
-- **本地靶场**：用 Docker 或 WSL2 在 `127.0.0.1` 上起一次性环境，把静态发现升级为动态验证
-- **源码审计工具链**：`extract_archive` 解包、审计技能、靶场模板
-- **Windows 支持**：Bash 工具可切换 Git Bash，靶场支持 WSL2 内的 Docker Engine
-- 以及若干修复（见下文「二开改动」）
+[Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)）。二开改动的详细说明见
+[二开版新增能力](#二开版新增能力) 与 [二开改动](#7-二开改动)。
 
 当前分支版本标记：`0.4.5-lab`（构建时通过 `-X main.version=0.4.5-lab` 注入；未注入时显示 `dev`）。
 
@@ -38,9 +74,9 @@ Go 1.26 + Next.js 16 + PostgreSQL · 单二进制内嵌前端
 
 ---
 
-## 界面预览
+## 更多界面
 
-> 截图为上游界面；二开版在任务列表/详情增加了模式徽章，并在系统配置中增加 Git Bash 设置。
+> 以下为上游界面截图；二开版新增的模式选择器、模式徽章与 Git Bash 设置见上方「二开亮点」。
 
 | 仪表盘 | 任务列表 |
 | :---: | :---: |
@@ -54,6 +90,9 @@ Go 1.26 + Next.js 16 + PostgreSQL · 单二进制内嵌前端
 
 ## 目录
 
+- [二开亮点](#-二开亮点)
+- [二开说明](#二开说明)
+- [更多界面](#更多界面)
 - [二开版新增能力](#二开版新增能力)
 - [功能总览](#功能总览)
 - [快速开始](#快速开始)
