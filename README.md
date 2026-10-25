@@ -35,11 +35,51 @@ Go 1.26 + Next.js 16 + PostgreSQL · 单二进制内嵌前端
 | :---: |
 | ![任务列表模式徽章](screenshots/fork-task-list.png) |
 
-**还有：**
+### 🧭 任务模式：从「黑盒渗透」扩展到「源码审计」
 
-- `extract_archive`：解包 `.zip` / `.tar.gz`，带 zip-slip 防护、5 万条目 / 2GiB 上限；
-- 内置 `code-audit` / `miniprogram-audit` 技能，自带 PHP / Java / Node / Python 靶场模板；
-- 修复 Anthropic Base URL 以 `/v1` 结尾时拼成 `/v1/v1/messages`、`graph_overview` 缺失任务 scope 等问题。
+上游 ARTEX 只面向黑盒渗透：planner 按攻击面派意图，worker 跑扫描、探测与验证工具。这个分支新增
+`code_audit` 与 `miniprogram_audit` 两种模式——创建任务时选中后，planner 会按**代码模块 / 页面分包**
+拆分审计面，worker 被明确要求**只读代码、不访问真实目标**，系统提示里追加审计立场、证据规约与
+资产关联规约。审计任务默认关闭资产覆盖度、跳过网络目标 seed，避免把上传的 `xxx.zip` 误判成线上站点
+种进资产图。
+
+| 模式 | planner 怎么拆 | worker 怎么干 |
+| --- | --- | --- |
+| `code_audit` | 按模块 / 入口 / 危险功能面（上传、登录、支付、导出） | Read/grep 只读审计，`record_fact` / `report_finding` 写回，证据带 `文件:行号` |
+| `miniprogram_audit` | 按页面 / 分包 / 公共模块 / 网络层 | 提取 API、AppSecret、登录态与支付逻辑，登记为资产 |
+| `pentest`（默认） | 按攻击面与利用链 | 跑真实工具做资产测绘与漏洞验证 |
+
+### 🧪 本地靶场：把静态发现变成可复现的动态证据
+
+静态审计最大的痛点是「发现了，但没法证明」。这个分支内置 `lab_up` / `lab_down` / `lab_status`：
+worker 可以在 `127.0.0.1` 上起一个**一次性 Docker 环境**（Windows 支持 WSL2 内的 Docker Engine），
+把源码跑起来，用真实请求复现 SQL 注入、命令执行、越权等问题，再把流量绑定为 `report_finding` 的证据。
+
+- **两种模式**：compose（自动注入 `${LAB_BIND}`、`${LAB_PORT_N}`、`${LAB_SOURCE}`）或 image（镜像 + 启动命令 + 端口映射）；
+- **复用与隔离**：同一 `key` + `reuse=true` 复用环境，按 holder 引用计数，最后一个使用方释放才销毁；破坏性验证单独起环境；
+- **默认限额**：内存 2G、2 CPU、1024 pids；任务终态/删除或超过 4 小时由 GC 自动回收。
+
+### 🪟 Windows：Git Bash + WSL2，不再是二等公民
+
+Windows 默认的 Bash 工具是 PowerShell，`grep`/`sed`/`awk` 这些审计常用命令不可用。现在可以在
+**系统配置 → 运行环境 · Shell（Git Bash）** 填 `bash.exe` 或 Git Bash 根目录，保存即生效；靶场会自动
+探测本机 Docker Desktop，或通过 WSL2 里的 Docker Engine 运行，并把 Windows 路径转换成 `/mnt/<drive>/...`。
+Windows 上也能完整跑「解包 → 静态审计 → 本地靶场动态验证」这条链路。
+
+### 🧰 审计工具链与修复
+
+- `extract_archive`：解包 `.zip` / `.tar.gz`，zip-slip 防护、5 万条目 / 2GiB 上限，返回 `top_level` 供判断站点根；
+- `code-audit` / `miniprogram-audit` 技能：内置检查清单、证据规约与资产关联规约；
+- 靶场模板：`skills/code-audit/templates/` 自带 PHP / Java / Node / Python 四套 compose 模板；
+- 修复 Anthropic Base URL 以 `/v1` 结尾时拼成 `/v1/v1/messages` 导致 404；
+- 修复 `graph_overview` 缺失任务 scope：现在会把 `task_scope` 与企业范围规则/关键词带给 planner，审计边界可见。
+
+### 适用场景
+
+- **甲方安全 / 代码审计**：上传业务源码做发布前审计，不接触线上环境；
+- **渗透测试**：先用审计模式定位入口和密钥，再用本地靶场复现，最后带着流量证据上报；
+- **小程序安全**：审计反编译产物，提取后端 API、AppSecret 与登录/支付风险；
+- **Windows 用户**：不想装 Linux，也能用 Git Bash + WSL2 Docker 跑完整链路。
 
 ### 上游 vs 本二开版
 
